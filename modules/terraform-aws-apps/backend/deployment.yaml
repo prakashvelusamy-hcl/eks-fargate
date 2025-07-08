@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      nodeSelector:
+        workload: backend
+      serviceAccountName: backend-sa  
+      containers:
+        - name: backend
+          image: 495599733393.dkr.ecr.ap-south-1.amazonaws.com/flask_app:v1
+          ports:
+            - containerPort: 5000
+          env:
+            - name: RDS_SECRET_NAME
+              value: "rds-credentials-secret"
+            - name: APP_SECRET_NAME
+              value: "rds-connection-secret"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000

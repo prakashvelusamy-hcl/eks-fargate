@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-env
+  namespace: frontend
+data:
+  env.js: |
+    window._env_ = {
+      REACT_APP_API_URL: "http://k8s-appgroup-7ed3303242-968065675.ap-south-1.elb.amazonaws.com/api"
+    };

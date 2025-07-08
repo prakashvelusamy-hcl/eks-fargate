@@ -1,0 +1,112 @@
+name: Build and Push to ECR
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  build-push-apps:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME_BACKEND: flask_backend
+      IMAGE_NAME_FRONTEND: react_frontend
+      DOCKER_DIR_BACKEND: backend
+      DOCKER_DIR_FRONTEND: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::495599733393:role/OIDC
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR Repositories Exist
+        run: |
+          aws ecr describe-repositories --repository-names "$IMAGE_NAME_BACKEND" || \
+            aws ecr create-repository --repository-name "$IMAGE_NAME_BACKEND"
+          aws ecr describe-repositories --repository-names "$IMAGE_NAME_FRONTEND" || \
+            aws ecr create-repository --repository-name "$IMAGE_NAME_FRONTEND"
+
+      - name: Build Backend (Flask) Docker image
+        run: |
+          docker build -t $IMAGE_NAME_BACKEND -f $DOCKER_DIR_BACKEND/Dockerfile $DOCKER_DIR_BACKEND
+
+      - name: Tag and Push Backend Image
+        run: |
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          docker tag $IMAGE_NAME_BACKEND:latest $ECR_REGISTRY/$IMAGE_NAME_BACKEND:v1
+          docker push $ECR_REGISTRY/$IMAGE_NAME_BACKEND:v1
+
+      - name: Build Frontend (React) Docker image
+        run: |
+          docker build -t $IMAGE_NAME_FRONTEND -f $DOCKER_DIR_FRONTEND/Dockerfile $DOCKER_DIR_FRONTEND
+
+      - name: Tag and Push Frontend Image
+        run: |
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          docker tag $IMAGE_NAME_FRONTEND:latest $ECR_REGISTRY/$IMAGE_NAME_FRONTEND:v1
+          docker push $ECR_REGISTRY/$IMAGE_NAME_FRONTEND:v1
+
+  deploy:
+    name: Deploy App and ALB Ingress
+    needs: build-push-apps  
+    runs-on: ubuntu-latest
+
+    env:
+      CLUSTER_NAME: EKS
+      AWS_REGION: ap-south-1
+      NAMESPACE: default
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::495599733393:role/OIDC
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+
+      - name: Verify Cluster Access
+        run: kubectl get nodes
+
+      - name: EKS Deployment + Service + Ingress
+        run: |
+         
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/backend/namespace.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/backend/deployment.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/backend/ingress.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/backend/hpa.yaml
+          
+          kubectl apply -f ./modules/terraform-aws-apps/frontend/namespace.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/frontend/configmap.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/frontend/aws-logging.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/frontend/deployment.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/frontend/ingress.yaml
+          kubectl apply -f ./modules/terraform-aws-apps/frontend/hpa.yaml
