@@ -47,7 +47,8 @@ module "eks" {
     kubernetes = kubernetes.eks
   }
 
-  depends_on = [module.vpc]
+   depends_on = [
+    module.helm ]
 }
 
 #############################################
